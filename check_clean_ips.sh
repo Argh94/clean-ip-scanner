@@ -13,7 +13,7 @@ setup_termux() {
     echo -e "${GREEN}Updating system and installing required packages...${RESET}"
     pkg update && pkg upgrade -y
     if [ $? -ne 0 ]; then
-        echo -e "${RED}Error updating system. Try changing the Termux repository.${RESET}"
+        echo -e "${RED}Error updating system. Try 'termux-change-repo'.${RESET}"
         exit 1
     fi
 
@@ -31,8 +31,7 @@ setup_termux() {
 }
 
 get_first_ip() {
-    local cidr=$1
-    echo "$cidr" | cut -d'/' -f1
+    echo "$1" | cut -d'/' -f1
 }
 
 check_ping() {
@@ -40,7 +39,6 @@ check_ping() {
     local source=$2
     local temp_file=$3
 
-    # Ping بهتر: ۳ پکت، timeout ۵ ثانیه
     local ping_result
     ping_result=$(ping -c 3 -W 5 "$ip" 2>/dev/null | 
                   grep -o 'time=[0-9.]*' | 
@@ -66,9 +64,9 @@ cleanup() {
 delete_script() {
     echo -e "${GREEN}Deleting script and all related files...${RESET}"
     rm -f "$TEMP_DIR/temp_ips_"*.txt
-    rm -f cloudflare_ips.txt domains.json sorted_ips.txt
+    rm -f cloudflare_ips.txt sorted_ips.txt domains.json
     rm -f "$0"
-    echo -e "${GREEN}Script and files removed successfully. Goodbye.${RESET}"
+    echo -e "${GREEN}Script and files removed successfully.${RESET}"
     exit 0
 }
 
@@ -94,9 +92,8 @@ show_menu() {
     echo -e "${CYAN}Enter option number (1-6): ${RESET}"
 }
 
-# ==================== تله سیگنال ====================
+# ==================== تله ====================
 trap 'cleanup; exit 0' SIGINT SIGTERM
-# تله EXIT حذف شد تا وقتی با exit 0 خارج می‌شویم فایل‌ها پاک نشوند
 
 setup_termux
 
@@ -111,7 +108,7 @@ while true; do
             echo -e "${GREEN}Fetching Cloudflare IPs...${RESET}"
             curl -s --connect-timeout 15 --retry 3 https://www.cloudflare.com/ips-v4 -o cloudflare_ips.txt
             if [ ! -s cloudflare_ips.txt ]; then
-                echo -e "${RED}Failed to fetch Cloudflare IPs. Check your connection/VPN.${RESET}"
+                echo -e "${RED}Failed to fetch Cloudflare IPs. Check connection/VPN.${RESET}"
                 read -p "Press Enter to continue..."
                 continue
             fi
@@ -126,7 +123,7 @@ while true; do
         2)
             echo -e "${GREEN}Fetching IRCF IPs...${RESET}"
             if [ ! -f "domains.json" ]; then
-                echo -e "${RED}domains.json not found in current directory!${RESET}"
+                echo -e "${RED}domains.json not found! Please create it.${RESET}"
                 read -p "Press Enter to continue..."
                 continue
             fi
@@ -156,24 +153,34 @@ while true; do
             fi
             while IFS= read -r cidr || [ -n "$cidr" ]; do
                 [ -z "$cidr" ] && continue
-                ip=$(echo "$cidr" | cut -d'/' -f1)
+                ip=$(get_first_ip "$cidr")
                 check_ping "$ip" "Gcore" "$TEMP_FILE"
             done < <(echo "$response" | jq -r '.addresses[]' 2>/dev/null)
             ;;
 
         4)
             echo -e "${GREEN}Fetching Fastly IPs...${RESET}"
-            response=$(curl -s --connect-timeout 15 --retry 3 -H "Accept: application/json" https://api.fastly.com/public-ip-list)
+            response=$(curl -s --connect-timeout 20 --retry 4 \
+                        -H "Accept: application/json" \
+                        https://api.fastly.com/public-ip-list)
+
             if [ $? -ne 0 ] || [ -z "$response" ]; then
-                echo -e "${RED}Failed to fetch Fastly IPs.${RESET}"
+                echo -e "${RED}Failed to fetch Fastly IPs. Try enabling VPN.${RESET}"
                 read -p "Press Enter to continue..."
                 continue
             fi
-            while IFS= read -r cidr || [ -n "$cidr" ]; do
-                [ -z "$cidr" ] && continue
-                ip=$(get_first_ip "$cidr")
-                check_ping "$ip" "Fastly" "$TEMP_FILE"
-            done < <(echo "$response" | jq -r '.addresses[]' 2>/dev/null)
+
+            count=$(echo "$response" | jq -r '.addresses | length' 2>/dev/null || echo 0)
+            if [ "$count" -gt 0 ]; then
+                echo -e "${GREEN}Fetched $count CIDR ranges from Fastly.${RESET}"
+                while IFS= read -r cidr || [ -n "$cidr" ]; do
+                    [ -z "$cidr" ] && continue
+                    ip=$(get_first_ip "$cidr")
+                    check_ping "$ip" "Fastly" "$TEMP_FILE"
+                done < <(echo "$response" | jq -r '.addresses[]' 2>/dev/null)
+            else
+                echo -e "${RED}No addresses found in Fastly response.${RESET}"
+            fi
             ;;
 
         5)
@@ -193,11 +200,10 @@ while true; do
             ;;
     esac
 
-    # ==================== مرتب‌سازی هوشمند ====================
+    # ==================== مرتب‌سازی نتایج ====================
     if [ -f "$TEMP_FILE" ] && [ -s "$TEMP_FILE" ]; then
         echo -e "\n${GREEN}Sorting results by latency...${RESET}"
         
-        # تبدیل Unreachable به عدد بالا برای مرتب‌سازی درست
         awk -F',' '
         {
             if ($3 == "Unreachable") 
@@ -219,9 +225,7 @@ while true; do
             fi
         done < "$TEMP_DIR/sorted_ips.txt"
 
-        if [ "$reachable_found" = false ]; then
-            echo -e "\n${RED}No reachable IPs found. Try VPN or different ISP.${RESET}"
-        fi
+        [ "$reachable_found" = false ] && echo -e "\n${RED}No reachable IPs found.${RESET}"
     else
         echo -e "${RED}No results found.${RESET}"
     fi
