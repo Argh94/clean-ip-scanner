@@ -160,7 +160,7 @@ while true; do
 
         4)
             echo -e "${GREEN}Fetching Fastly IPs...${RESET}"
-            response=$(curl -s --connect-timeout 20 --retry 4 \
+            response=$(curl -s --connect-timeout 25 --retry 5 \
                         -H "Accept: application/json" \
                         https://api.fastly.com/public-ip-list)
 
@@ -170,16 +170,21 @@ while true; do
                 continue
             fi
 
+            echo -e "${CYAN}Received data size: ${#response} characters${RESET}"
+
             count=$(echo "$response" | jq -r '.addresses | length' 2>/dev/null || echo 0)
+
             if [ "$count" -gt 0 ]; then
-                echo -e "${GREEN}Fetched $count CIDR ranges from Fastly.${RESET}"
+                echo -e "${GREEN}Successfully fetched $count CIDR ranges from Fastly.${RESET}"
+                
                 while IFS= read -r cidr || [ -n "$cidr" ]; do
                     [ -z "$cidr" ] && continue
                     ip=$(get_first_ip "$cidr")
                     check_ping "$ip" "Fastly" "$TEMP_FILE"
                 done < <(echo "$response" | jq -r '.addresses[]' 2>/dev/null)
             else
-                echo -e "${RED}No addresses found in Fastly response.${RESET}"
+                echo -e "${RED}No addresses found!${RESET}"
+                echo "$response" | head -c 400
             fi
             ;;
 
