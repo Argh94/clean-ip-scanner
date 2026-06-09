@@ -165,12 +165,22 @@ while true; do
                         https://api.fastly.com/public-ip-list)
 
             if [ $? -ne 0 ] || [ -z "$response" ]; then
-                echo -e "${RED}Failed to fetch Fastly IPs. Try enabling VPN.${RESET}"
+                echo -e "${RED}Connection failed. Try enabling VPN.${RESET}"
                 read -p "Press Enter to continue..."
                 continue
             fi
 
             echo -e "${CYAN}Received data size: ${#response} characters${RESET}"
+
+            # تشخیص بلاک شدن Fastly
+            if echo "$response" | grep -q "Restricted Country or Region"; then
+                echo -e "${RED}❌ Fastly API is blocked in your country.${RESET}"
+                echo -e "${RED}You need to use a VPN to access this API.${RESET}"
+                echo -e "${CYAN}Raw response:${RESET}"
+                echo "$response"
+                read -p "Press Enter to continue..."
+                continue
+            fi
 
             count=$(echo "$response" | jq -r '.addresses | length' 2>/dev/null || echo 0)
 
@@ -183,7 +193,7 @@ while true; do
                     check_ping "$ip" "Fastly" "$TEMP_FILE"
                 done < <(echo "$response" | jq -r '.addresses[]' 2>/dev/null)
             else
-                echo -e "${RED}No addresses found!${RESET}"
+                echo -e "${RED}No addresses found in response.${RESET}"
                 echo "$response" | head -c 400
             fi
             ;;
